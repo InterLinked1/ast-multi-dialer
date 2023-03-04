@@ -19,6 +19,9 @@ all : main
 %.o: %.c
 	$(CC) $(CFLAGS) -c $^
 
+cami.o: cami.c
+	$(CC) $(CFLAGS) -c cami.c
+
 cami :
 	@if [ ! -f cami.o ]; then\
 		git clone https://github.com/InterLinked1/cami.git cami;\
