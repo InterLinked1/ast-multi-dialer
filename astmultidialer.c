@@ -75,8 +75,8 @@
 #include <signal.h>
 #include <errno.h>
 
-#include "include/cami.h"
-#include "include/cami_actions.h"
+#include <cami/cami.h>
+#include <cami/cami_actions.h>
 
 static struct termios origterm, ttyterm;
 static char inputbuf[64] = "";

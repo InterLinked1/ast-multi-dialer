@@ -44,7 +44,9 @@ Basically, think of this program as providing you with nine virtual 2500 sets, e
 
 ## Compiling
 
-This program requires being statically linked with [CAMI](https://github.com/InterLinked1/cami). This is done automatically if you run `make`.
+This program requires being dynamically linked with [CAMI](https://github.com/InterLinked1/cami). You will need to first ensure this is built and installed on your system.
+
+Afterwards, you can simply run `make`.
 
 Before you compile, you should update these macros at the top of the file for your dialplan:
 

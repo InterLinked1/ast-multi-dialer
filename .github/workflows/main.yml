@@ -25,4 +25,9 @@ jobs:
        run: |
           echo Beginning build
           pwd
+          git clone https://github.com/InterLinked1/cami.git
+          cd cami
+          make
+          sudo make install
+          cd ..
           make

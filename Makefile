@@ -19,24 +19,12 @@ all : main
 %.o: %.c
 	$(CC) $(CFLAGS) -c $^
 
-cami.o: cami.c
-	$(CC) $(CFLAGS) -c cami.c
-
-cami :
-	@if [ ! -f cami.o ]; then\
-		git clone https://github.com/InterLinked1/cami.git cami;\
-		cp -r cami/include .;\
-		cp cami/cami.c .;\
-		rm -rf cami;\
-	fi
-
-main : cami $(MAIN_OBJ) cami.o
-	$(CC) $(CFLAGS) -o $(EXE) $(LIBS) *.o -ldl
+main : $(MAIN_OBJ)
+	$(CC) $(CFLAGS) -o $(EXE) $(LIBS) *.o -ldl -lcami
 
 clean :
 	$(RM) *.i *.o
 
-.PHONY: cami
 .PHONY: all
 .PHONY: main
 .PHONY: clean
