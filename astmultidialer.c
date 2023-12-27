@@ -89,30 +89,34 @@ struct line {
 	unsigned int offhook:1;
 };
 
+struct ami_session *global_ami = NULL;
+
 #define MAX_LINES 9
 
 static struct line lines[MAX_LINES + 1]; /* Leave index 0 unused for simplicitly, so we can use it 1-indexed. */
 
 /*! \brief Callback function executing asynchronously when new events are available */
-static void ami_callback(struct ami_event *event)
+static void ami_callback(struct ami_session *ami, struct ami_event *event)
 {
+	(void) ami;
 	ami_event_free(event); /* Discard all events. We don't need them. */
 }
 
-static void simple_disconnect_callback(void)
+static void simple_disconnect_callback(struct ami_session *ami)
 {
+	(void) ami;
 	fprintf(stderr, "\nAMI was forcibly disconnected...\n");
 	tcsetattr(STDIN_FILENO, TCSANOW, &origterm); /* Restore the original term settings */
 	exit(EXIT_FAILURE);
 }
 
-static void hangup_all(void)
+static void hangup_all(struct ami_session *ami)
 {
 	int i;
 
 	for (i = 1; i <= MAX_LINES; i++) {
 		if (lines[i].offhook) {
-			struct ami_response *resp = ami_action("Hangup", "Channel:%s\r\nCause:%d", lines[i].channel, 16);
+			struct ami_response *resp = ami_action(ami, "Hangup", "Channel:%s\r\nCause:%d", lines[i].channel, 16);
 			if (resp && resp->success) {
 				fprintf(stderr, "Hung up line %d\n", i);
 				lines[i].offhook = 0;
@@ -130,15 +134,18 @@ static void restore_term(int num)
 	tcsetattr(STDIN_FILENO, TCSANOW, &origterm); /* Restore the original term settings */
 	fprintf(stderr, "\n");
 
-	/* Hang up any lines still active */
-	hangup_all();
+	if (global_ami) {
+		/* Hang up any lines still active */
+		hangup_all(global_ami);
+		ami_disconnect(global_ami);
+		ami_destroy(global_ami);
+	}
 
-	ami_disconnect();
 	fprintf(stderr, "\nAstMultiDialer exiting...\n");
 	exit(EXIT_FAILURE);
 }
 
-static int find_channel(int n)
+static int find_channel(struct ami_session *ami, int n)
 {
 	int i, found = 0;
 	struct ami_response *resp;
@@ -148,7 +155,7 @@ static int find_channel(int n)
 	/* Originate action doesn't give us the new channel name, so try to find it,
 	 * assuming there's only one channel with the prefix of the device name */
 
-	resp = ami_action_show_channels();
+	resp = ami_action_show_channels(ami);
 	if (!resp) {
 		fprintf(stderr, "Failed to show channels\n");
 		return -1;
@@ -177,7 +184,7 @@ static int find_channel(int n)
 		s++; \
 	}
 
-static int run_command(char *command)
+static int run_command(struct ami_session *ami, char *command)
 {
 	struct ami_response *resp;
 	char *tmp;
@@ -211,11 +218,11 @@ static int run_command(char *command)
 				fprintf(stderr, "XXX Not implemented yet\n");
 				break;
 			case 'o': /* originate (off hook) */
-				resp = ami_action("Originate", "Channel:%s\r\nContext:%s\r\nExten:%s\r\nPriority:%s", lines[n].dialstr, lines[n].dialexten, PLAR_DIALPLAN_EXTEN, "1", NULL);
+				resp = ami_action(ami, "Originate", "Channel:%s\r\nContext:%s\r\nExten:%s\r\nPriority:%s", lines[n].dialstr, lines[n].dialexten, PLAR_DIALPLAN_EXTEN, "1", NULL);
 				REQUIRE_RESP(resp);
 				if (resp && resp->success) {
 					lines[n].offhook = 1;
-					if (!find_channel(n)) {
+					if (!find_channel(ami, n)) {
 						fprintf(stderr, "OK\n");
 					}
 				} else {
@@ -225,7 +232,7 @@ static int run_command(char *command)
 				break;
 			case 'h': /* on hook */
 				REQUIRE_ACTIVE();
-				resp = ami_action("Hangup", "Channel:%s\r\nCause:%d", lines[n].channel, 16);
+				resp = ami_action(ami, "Hangup", "Channel:%s\r\nCause:%d", lines[n].channel, 16);
 				REQUIRE_RESP(resp);
 				if (resp && resp->success) {
 					lines[n].offhook = 0;
@@ -237,7 +244,7 @@ static int run_command(char *command)
 				break;
 			case 'f': /* flash */
 				REQUIRE_ACTIVE();
-				resp = ami_action("SendFlash", "Channel:%s", lines[n].channel);
+				resp = ami_action(ami, "SendFlash", "Channel:%s", lines[n].channel);
 				REQUIRE_RESP(resp);
 				if (resp && resp->success) {
 					fprintf(stderr, "OK\n");
@@ -253,7 +260,7 @@ static int run_command(char *command)
 					/* The PlayDTMF action is kind of silly. You have to do it once digit at a time.
 					 * However, we can send all the digits at once without waiting, and the channel will queue them up. */
 					while (*command) {
-						resp = ami_action("PlayDTMF", "Channel:%s\r\nDigit:%c", lines[n].channel, *command);
+						resp = ami_action(ami, "PlayDTMF", "Channel:%s\r\nDigit:%c", lines[n].channel, *command);
 						command++;
 					}
 				} else if (*tmp == 'p') {
@@ -280,7 +287,7 @@ static int run_command(char *command)
 		} else if (!strcasecmp(command, "q")) {
 			return -1;
 		} else if (!strcasecmp(command, "k")) {
-			hangup_all();
+			hangup_all(ami);
 		} else {
 			fprintf(stderr, "Unknown global command '%s'\n", command);
 		}
@@ -317,7 +324,7 @@ static void show_command_help(void)
 	);
 }
 
-static int multidialer(void)
+static int multidialer(struct ami_session *ami)
 {
 	struct pollfd pfd;
 	char *pos;
@@ -362,7 +369,7 @@ static int multidialer(void)
 			if (c == '\n') {
 				/* Got a full command, execute */
 				*pos = '\0';
-				if (run_command(inputbuf)) {
+				if (run_command(ami, inputbuf)) {
 					break;
 				}
 				inputbuf[0] = '\0';
@@ -381,7 +388,8 @@ static int multidialer(void)
 		}
 	}
 
-	ami_disconnect();
+	ami_disconnect(ami);
+	ami_destroy(ami);
 	tcsetattr(STDIN_FILENO, TCSANOW, &origterm); /* Restore the original term settings */
 	return 0;
 }
@@ -409,6 +417,7 @@ int main(int argc,char *argv[])
 	char ami_username[64] = "";
 	char ami_password[64] = "";
 	static int ami_debug_level = 0;
+	struct ami_session *ami;
 
 	while ((c = getopt(argc, argv, getopt_settings)) != -1) {
 		switch (c) {
@@ -450,11 +459,12 @@ int main(int argc,char *argv[])
 		return -1;
 	}
 
-	if (ami_connect(ami_host, 0, ami_callback, simple_disconnect_callback)) {
+	global_ami = ami = ami_connect(ami_host, 0, ami_callback, simple_disconnect_callback);
+	if (!ami) {
 		fprintf(stderr, "Failed to connect to AMI (host: %s, user: %s)\n", ami_host, ami_username);
 		return -1;
 	}
-	if (ami_action_login(ami_username, ami_password)) {
+	if (ami_action_login(ami, ami_username, ami_password)) {
 		fprintf(stderr, "Failed to log in with username %s\n", ami_username);
 		return -1;
 	}
@@ -466,12 +476,12 @@ int main(int argc,char *argv[])
 	fflush(stdout);
 
 	if (ami_debug_level) {
-		ami_set_debug(STDERR_FILENO);
-		ami_set_debug_level(ami_debug_level);
+		ami_set_debug(ami, STDERR_FILENO);
+		ami_set_debug_level(ami, ami_debug_level);
 		fprintf(stderr, "AMI debug level is %d\n", ami_debug_level);
 	}
 
-	if (multidialer()) {
+	if (multidialer(ami)) {
 		return -1;
 	}
 	return 0;
